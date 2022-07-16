@@ -3,11 +3,12 @@ identify subgroups of single-copy orthologous genes in multi-copy gene families
 """
 
 from enum import Enum
+import os
 import subprocess
 from typing import Optional
 
 from latch import small_task, workflow
-from latch.types import LatchFile, LatchDir
+from latch.types import LatchFile, LatchDir, file_glob
 
 class InparalogToKeep(Enum):
     shortest_seq_len = "shortest_seq_len"
@@ -22,16 +23,14 @@ def orthosnap_task(
     multi_copy_gene_tree: LatchFile,
     multi_copy_fasta_file: LatchFile,
     output_dir: LatchDir,
+    rooted: bool = False, 
+    snap_trees: bool = False,
     support: Optional[float] = 80.0,
-    occupancy: Optional[float] = None,
-    rooted: Optional[bool] = False, 
-    snap_trees: Optional[bool] = False, 
+    occupancy: Optional[int] = 5,
     inparalog_to_keep: Optional[InparalogToKeep] = InparalogToKeep.longest_seq_len,
     ) -> LatchDir:
 
-    local_dir = "/root/orthosnap_output/" #local directory to put output files in
-
-    # iqtree command
+    # OrthoSNAP handling
     _orthosnap_cmd = [
         "orthosnap",
         "-t",
@@ -39,29 +38,33 @@ def orthosnap_task(
         "-f",
         multi_copy_fasta_file.local_path,
         "-s",
-        support,
+        str(support),
         "-o",
-        occupancy,
-        "-r",
-        rooted,
-        "-st",
-        snap_trees,
+        str(occupancy),
         "-ip",
         inparalog_to_keep.value,
     ]
 
+    if rooted: # if input tree is rooted
+        _orthosnap_cmd.append("-r")
+
+    if snap_trees: # if SNAP-OG trees are to be outputted
+        _orthosnap_cmd.append("-st")
+
     subprocess.run(_orthosnap_cmd)
-    return LatchDir(local_dir, output_dir.remote_path) # this returns the directory in which all output files are stored
+
+    return file_glob("*.orthosnap.*", output_dir.remote_path)
+
 
 @workflow
 def orthosnap(
     multi_copy_gene_tree: LatchFile,
     multi_copy_fasta_file: LatchFile,
     output_dir: LatchDir,
+    rooted: bool = False, 
+    snap_trees: bool = False, 
     support: Optional[float] = 80.0,
-    occupancy: Optional[float] = None,
-    rooted: Optional[bool] = False, 
-    snap_trees: Optional[bool] = False, 
+    occupancy: Optional[int] = 5,
     inparalog_to_keep: Optional[InparalogToKeep] = InparalogToKeep.longest_seq_len,
     ) -> LatchDir:
     """
@@ -147,14 +150,15 @@ def orthosnap(
     [10.1101/2021.10.30.466607v1](https://www.biorxiv.org/content/10.1101/2021.10.30.466607v1).
 
     __metadata__:
-        display_name: Identify subgroups of single-copy groups of genes using OrthoSNAP.
-        author: Jacob L. Steenwyk
+        display_name: OrthoSNAP
+        author:
             name: Jacob L. Steenwyk
             email: jlsteenwyk@gmail.com
             github: https://github.com/JLSteenwyk
+            twitter: JLSteenwyk
         repository: https://github.com/JLSteenwyk/orthosnap
         license:
-            id: GNU-GPL
+            id: MIT
 
 
     Args:
@@ -172,6 +176,13 @@ def orthosnap(
                 display_name: "Input multi-copy gene family FASTA"
                 appearance:
 					comment: "Input multi-copy gene family FASTA"
+
+        output_dir:
+            Output directory
+			__metadata__:
+				display_name: "Output directory"
+				appearance:
+					comment: "Output directory"
 
         support:
             bipartition support value for collapsing low supported branches
@@ -191,17 +202,11 @@ def orthosnap(
             Boolean for whether the input tree is already rooted 
             __metadata__:
                 display_name: "Rooted input tree"
-                appearance:
-					comment: "- True
-                    - False"
 
         snap_trees:
             Boolean for whether SNAP-OG phylogenies should also be outputted 
             __metadata__:
-                display_name: "Rooted input tree"
-                appearance:
-					comment: "- True
-                    - False"
+                display_name: "Output Newick files of SNAP-OGs"
 
         inparalog_to_keep:
             Determine which species-specific inparalog to keep
@@ -213,14 +218,7 @@ def orthosnap(
                     - longest_seq_len,
                     - shortest_branch_len,
                     - median_branch_len,
-                    - longest_branch_len"
-
-        output_dir:
-            Output directory
-			__metadata__:
-				display_name: "Output directory"
-				appearance:
-					comment: "Output directory"
+                    - longest_branch_len}"
 
     """
 

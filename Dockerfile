@@ -1,13 +1,11 @@
 FROM 812206152185.dkr.ecr.us-west-2.amazonaws.com/wf-base:fbe8-main
 
-# IQTree
-RUN curl -L https://github.com/iqtree/iqtree2/releases/download/v2.2.0/iqtree-2.2.0-Linux.tar.gz -o iqtree-2.2.0-Linux.tar.gz &&\
-    gunzip -cd iqtree-2.2.0-Linux.tar.gz | tar xfv - &&\
-    mv iqtree-2.2.0-Linux/bin/iqtree2 /usr/bin &&\
-    rm -rf iqtree-2.2.0-Linux iqtree-2.2.0-Linux.tar.gz
+# 
+COPY requirements.txt requirements.txt
+RUN pip install -r requirements.txt
 
 #create local directory to store output of cmd later
-RUN mkdir /root/iqtree_output/
+RUN mkdir /root/orthosnap_output/
 
 COPY wf /root/wf
 
