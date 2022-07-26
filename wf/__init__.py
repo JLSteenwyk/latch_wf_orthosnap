@@ -3,16 +3,18 @@ identify subgroups of single-copy orthologous genes in multi-copy gene families
 """
 
 from enum import Enum
+import glob
 import os
 from pathlib import Path
 import subprocess
 from typing import Optional, List
 
 from latch import small_task, workflow
-from latch.types import LatchFile, LatchDir
+from latch.types import LatchFile, LatchDir, file_glob
 from latch.types.utils import _is_valid_url
 
 class InparalogToKeep(Enum):
+    none = "none"
     shortest_seq_len = "shortest_seq_len"
     median_seq_len = "median_seq_len"
     longest_seq_len = "longest_seq_len"
@@ -20,57 +22,63 @@ class InparalogToKeep(Enum):
     median_branch_len = "median_branch_len"
     longest_branch_len = "longest_branch_len"
 
-def file_glob(
-    pattern: str,
-    remote_directory: str,
-    target_dir: Optional[Path] = None
-) -> List[LatchFile]:
-    """Constructs a list of LatchFiles from a glob pattern.
-    Convenient utility for passing collections of files between tasks. See
-    [nextflow's channels](https://www.nextflow.io/docs/latest/channel.html) or
-    [snakemake's wildcards](https://snakemake.readthedocs.io/en/stable/snakefiles/rules.html#wildcards).
-    for similar functionality in other orchestration tools.
-    The remote location of each constructed LatchFile will be consructed by
-    appending the file name returned by the pattern to the directory
-    represented by the `remote_directory`.
-    Args:
-        pattern: A glob pattern to match a set of files, eg. '\*.py'. Will
-            resolve paths with respect to the working directory of the caller.
-        remote_directory: A valid latch URL pointing to a directory, eg.
-            latch:///foo. This _must_ be a directory and not a file.
-        target_dir: An optional Path object to define an alternate working
-            directory for path resolution
-    Returns:
-        A list of instantiated LatchFile objects.
-    Intended Use: ::
-        @small_task
-        def task():
-            ...
-            return file_glob("*.fastq.gz", "latch:///fastqc_outputs")
-    """
+# def file_glob(
+#     pattern: str,
+#     remote_directory: str,
+#     target_dir: Optional[Path] = None
+# ) -> List[LatchFile]:
+#     """Constructs a list of LatchFiles from a glob pattern.
+#     Convenient utility for passing collections of files between tasks. See
+#     [nextflow's channels](https://www.nextflow.io/docs/latest/channel.html) or
+#     [snakemake's wildcards](https://snakemake.readthedocs.io/en/stable/snakefiles/rules.html#wildcards).
+#     for similar functionality in other orchestration tools.
+#     The remote location of each constructed LatchFile will be consructed by
+#     appending the file name returned by the pattern to the directory
+#     represented by the `remote_directory`.
+#     Args:
+#         pattern: A glob pattern to match a set of files, eg. '\*.py'. Will
+#             resolve paths with respect to the working directory of the caller.
+#         remote_directory: A valid latch URL pointing to a directory, eg.
+#             latch:///foo. This _must_ be a directory and not a file.
+#         target_dir: An optional Path object to define an alternate working
+#             directory for path resolution
+#     Returns:
+#         A list of instantiated LatchFile objects.
+#     Intended Use: ::
+#         @small_task
+#         def task():
+#             ...
+#             return file_glob("*.fastq.gz", "latch:///fastqc_outputs")
+#     """
 
-    if not _is_valid_url(remote_directory):
-        return []
+#     if not _is_valid_url(remote_directory):
+#         return []
 
-    if target_dir is None:
-        wd = Path.cwd()
-    else:
-        wd = target_dir
-    matched = sorted(wd.glob(pattern))
+#     if target_dir is None:
+#         wd = Path.cwd()
+#     else:
+#         wd = target_dir
+#     matched = sorted(wd.glob(pattern))
 
-    return [LatchFile(str(file), remote_directory + file.name) for file in matched]
+#     return [LatchFile(str(file), remote_directory + file.name) for file in matched]
 
 @small_task
 def orthosnap_task(
     multi_copy_gene_tree: LatchFile,
     multi_copy_fasta_file: LatchFile,
     output_dir: LatchDir,
+    inparalog_to_keep: InparalogToKeep,
     rooted: bool = False, 
     snap_trees: bool = False,
     support: Optional[float] = 80.0,
     occupancy: Optional[int] = 5,
-    inparalog_to_keep: Optional[InparalogToKeep] = InparalogToKeep.longest_seq_len,
-) -> List[LatchFile]:
+) -> LatchDir: #List[LatchFile]:
+
+    if inparalog_to_keep.value == "none":
+        inparalog_to_keep = InparalogToKeep.longest_seq_len
+
+    if support == None:
+        support = 0.0
 
     # OrthoSNAP handling
     _orthosnap_cmd = [
@@ -93,22 +101,27 @@ def orthosnap_task(
     if snap_trees: # if SNAP-OG trees are to be outputted
         _orthosnap_cmd.append("-st")
 
+    local_dir = "/root/orthosnap_output/" #local directory to put output files in
+
+    _orthosnap_cmd.append("-op")
+    _orthosnap_cmd.append(local_dir)
+
     subprocess.run(_orthosnap_cmd)
 
-    return file_glob("*.orthosnap.*", output_dir.remote_path, multi_copy_fasta_file.local_path)
-
+    # return file_glob(f"{local_dir}/*.orthosnap.*", output_dir.remote_path) #, Path(multi_copy_fasta_file))
+    return LatchDir(local_dir, output_dir.remote_path)
 
 @workflow
 def orthosnap(
     multi_copy_gene_tree: LatchFile,
     multi_copy_fasta_file: LatchFile,
     output_dir: LatchDir,
+    inparalog_to_keep: InparalogToKeep,
     rooted: bool = False, 
     snap_trees: bool = False, 
     support: Optional[float] = 80.0,
     occupancy: Optional[int] = 5,
-    inparalog_to_keep: Optional[InparalogToKeep] = InparalogToKeep.longest_seq_len,
-) -> List[LatchFile]:
+) -> LatchDir: #List[LatchFile]:
     """
     OrthoSNAP
     ----
@@ -226,6 +239,18 @@ def orthosnap(
 				appearance:
 					comment: "Output directory"
 
+        inparalog_to_keep:
+            Determine which species-specific inparalog to keep
+            __metadata__:
+                display_name: "Determine which species-specific inparalog to keep"
+                appearance:
+					comment: "- shortest_seq_len,
+                    - median_seq_len,
+                    - longest_seq_len,
+                    - shortest_branch_len,
+                    - median_branch_len,
+                    - longest_branch_len}"
+
         support:
             bipartition support value for collapsing low supported branches
             __metadata__:
@@ -250,27 +275,15 @@ def orthosnap(
             __metadata__:
                 display_name: "Output Newick files of SNAP-OGs"
 
-        inparalog_to_keep:
-            Determine which species-specific inparalog to keep
-            __metadata__:
-                display_name: "Determine which species-specific inparalog to keep"
-                appearance:
-					comment: "- shortest_seq_len,
-                    - median_seq_len,
-                    - longest_seq_len,
-                    - shortest_branch_len,
-                    - median_branch_len,
-                    - longest_branch_len}"
-
     """
 
     return orthosnap_task(
         multi_copy_gene_tree=multi_copy_gene_tree,
         multi_copy_fasta_file=multi_copy_fasta_file,
         output_dir=output_dir,
+        inparalog_to_keep=inparalog_to_keep,
         support=support,
         occupancy=occupancy,
         rooted=rooted,
         snap_trees=snap_trees,
-        inparalog_to_keep=inparalog_to_keep,
     )
